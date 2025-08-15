@@ -18,13 +18,17 @@ FILES_TO_EXTRACT = ["HDFS.log", "preprocessed/anomaly_label.csv"]
 # Configuración para Colab
 if 'COLAB_GPU' in os.environ:
     print("Entorno de Google Colab detectado. Ajustando configuraciones...")
-    BATCH_SIZE_TRAIN = 512
+    BATCH_SIZE_TRAIN = 1024
     BATCH_SIZE_DETECT = 4096
-    VECTORIZE_FEATURES = 3000  # Reducido para ahorrar memoria
+    VECTORIZE_FEATURES = 3000
+    VECTORIZE_CHUNKSIZE = 50000
+    EPOCHS = 20
 else:
-    BATCH_SIZE_TRAIN = 256
+    BATCH_SIZE_TRAIN = 512
     BATCH_SIZE_DETECT = 2048
     VECTORIZE_FEATURES = 5000
+    VECTORIZE_CHUNKSIZE = 20000
+    EPOCHS = 50
 
 def main():
     # Crear estructura de directorios
@@ -38,11 +42,10 @@ def main():
     print("Paso 1: Descarga del dataset HDFS")
     download_file(URL, ZIP_PATH, skip_if_exists=True)
     
-    # Liberar memoria inmediatamente después de descarga
-    if 'COLAB_GPU' in os.environ:
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+    # Liberar memoria
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # 2. EXTRACCIÓN
     print("\n" + "="*50)
@@ -51,8 +54,7 @@ def main():
     print(f"[SUCCESS] Archivos extraídos: {extracted}")
     
     # Liberar memoria
-    if 'COLAB_GPU' in os.environ:
-        gc.collect()
+    gc.collect()
 
     # 3. PREPROCESAMIENTO
     print("\n" + "="*50)
@@ -61,52 +63,50 @@ def main():
     print(f"[SUCCESS] Archivo preprocesado guardado en: {out_path}")
     
     # Liberar memoria
-    if 'COLAB_GPU' in os.environ:
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # 4. VECTORIZACIÓN OPTIMIZADA
     print("\n" + "="*50)
     print("Paso 4: Vectorización optimizada con TF-IDF")
-    print(f"Configuración para Colab: max_features={VECTORIZE_FEATURES}")
+    print(f"Configuración: max_features={VECTORIZE_FEATURES}, chunksize={VECTORIZE_CHUNKSIZE}")
     
     x_path, y_path, vec_path = vectorize_hdfs(
         input_csv=out_path,
-        max_features=VECTORIZE_FEATURES,  # Reducido para ahorrar memoria
-        ngram_range=(1, 1),  # Solo unigramas para reducir dimensionalidad
-        chunksize=20000,      # Procesar en bloques grandes
-        x_out_path="data/processed/X_tfidf_sparse.joblib",  # Guardar como matriz dispersa
-        verbose=2             # Más detalles de progreso
+        max_features=VECTORIZE_FEATURES,
+        ngram_range=(1, 1),
+        chunksize=VECTORIZE_CHUNKSIZE,
+        verbose=2
     )
     
     print(f"[SUCCESS] Vectorización completada. Rutas:\n - X: {x_path}\n - y: {y_path}\n - Vectorizador: {vec_path}")
     
-    # Liberar memoria agresivamente después de vectorización
+    # Liberar memoria agresivamente
     print("Liberando memoria después de vectorización...")
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # 5. ENTRENAR AUTOENCODER
+    # 5. ENTRENAR AUTOENCODER ACELERADO
     print("\n" + "="*50)
-    print("Paso 5: Entrenamiento del autoencoder")
-    print(f"Usando batch size: {BATCH_SIZE_TRAIN}")
+    print("Paso 5: Entrenamiento acelerado del autoencoder")
+    print(f"Usando batch size: {BATCH_SIZE_TRAIN}, épocas: {EPOCHS}")
     
     history, model_path = train_autoencoder_hdfs(
         x_path=x_path,
         y_path=y_path,
         batch_size=BATCH_SIZE_TRAIN,
-        encoding_dim=64,      # Reducido para ahorrar memoria
-        hidden_dim=128        # Reducido para ahorrar memoria
+        epochs=EPOCHS,
+        encoding_dim=32,
+        hidden_dim=64
     )
     print(f"Entrenamiento completo. Modelo guardado en: {model_path}")
     
     # Liberar memoria
-    if 'COLAB_GPU' in os.environ:
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # 6. DETECTAR ANOMALÍAS
     print("\n" + "="*50)
@@ -134,8 +134,7 @@ if __name__ == "__main__":
     main()
     
     # Liberación final de memoria
-    if 'COLAB_GPU' in os.environ:
-        print("Limpiando memoria...")
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+    print("Limpiando memoria...")
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
