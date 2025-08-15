@@ -23,7 +23,6 @@ def detect_anomalies_hdfs(
     
     # Cargar datos dispersos
     X_sparse = joblib.load(x_path)
-    y = joblib.load(y_path)
     
     # Cargar modelo
     input_dim = X_sparse.shape[1]
@@ -66,7 +65,7 @@ def detect_anomalies_hdfs(
     joblib.dump({
         "threshold_method": threshold_method,
         "threshold": threshold,
-        "percentile": percentile if threshold_method=="percentile" else None,
+        "percentile": percentile,
         "mse_mean": float(np.mean(mse_scores)),
         "mse_std": float(np.std(mse_scores)),
         "num_anomalies": int(np.sum(preds)),
