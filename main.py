@@ -18,17 +18,17 @@ FILES_TO_EXTRACT = ["HDFS.log", "preprocessed/anomaly_label.csv"]
 # Configuración para Colab
 if 'COLAB_GPU' in os.environ:
     print("Entorno de Google Colab detectado. Ajustando configuraciones...")
+    BATCH_SIZE_TRAIN = 2048
+    BATCH_SIZE_DETECT = 8192
+    VECTORIZE_FEATURES = 2000
+    VECTORIZE_CHUNKSIZE = 50000
+    EPOCHS = 10
+else:
     BATCH_SIZE_TRAIN = 1024
     BATCH_SIZE_DETECT = 4096
     VECTORIZE_FEATURES = 3000
-    VECTORIZE_CHUNKSIZE = 50000
-    EPOCHS = 20
-else:
-    BATCH_SIZE_TRAIN = 512
-    BATCH_SIZE_DETECT = 2048
-    VECTORIZE_FEATURES = 5000
     VECTORIZE_CHUNKSIZE = 20000
-    EPOCHS = 50
+    EPOCHS = 15
 
 def main():
     # Crear estructura de directorios
@@ -88,9 +88,9 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # 5. ENTRENAR AUTOENCODER ACELERADO
+    # 5. ENTRENAR AUTOENCODER CON CARGA INCREMENTAL
     print("\n" + "="*50)
-    print("Paso 5: Entrenamiento acelerado del autoencoder")
+    print("Paso 5: Entrenamiento optimizado con carga incremental")
     print(f"Usando batch size: {BATCH_SIZE_TRAIN}, épocas: {EPOCHS}")
     
     history, model_path = train_autoencoder_hdfs(
@@ -98,8 +98,8 @@ def main():
         y_path=y_path,
         batch_size=BATCH_SIZE_TRAIN,
         epochs=EPOCHS,
-        encoding_dim=32,
-        hidden_dim=64
+        encoding_dim=24,
+        hidden_dim=48
     )
     print(f"Entrenamiento completo. Modelo guardado en: {model_path}")
     
@@ -130,6 +130,10 @@ if __name__ == "__main__":
     # Configuración automática de dispositivo
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n=== Usando dispositivo: {device} ===")
+    
+    # Monitoreo inicial de memoria
+    if device.type == 'cuda':
+        print(f"Memoria GPU disponible: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
     
     main()
     

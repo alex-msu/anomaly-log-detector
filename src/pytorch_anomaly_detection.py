@@ -1,52 +1,48 @@
-# src/pytorch_anomaly_detection.py
 import torch
 import numpy as np
 import joblib
 from pathlib import Path
-from .pytorch_autoencoder import Autoencoder
+from .pytorch_autoencoder import Autoencoder, SparseTensorDataset
+from torch.utils.data import DataLoader
+import gc
 
 def detect_anomalies_hdfs(
     model_path: str | Path,
-    x_path: str | Path = "data/processed/X_tfidf.joblib",
+    x_path: str | Path = "data/processed/X_tfidf_sparse.joblib",
     y_path: str | Path = "data/processed/y.joblib",
     threshold_method: str = "percentile",
     percentile: float = 0.99,
-    batch_size: int = 2048,
+    batch_size: int = 8192,
     mse_out_path: str | Path = "data/results/mse_scores.joblib",
     preds_out_path: str | Path = "data/results/anomaly_preds.joblib",
     meta_out_path: str | Path = "data/results/anomaly_meta.joblib",
 ):
-    """
-    Detectar anomalías usando un autoencoder entrenado con PyTorch
-    """
-    # Configurar dispositivo (GPU si está disponible)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Usando dispositivo: {device} para anomaly detection")
+    # Configurar dispositivo
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Usando dispositivo: {device} para detección de anomalías")
     
-    # Cargar datos
-    X = joblib.load(x_path)
-    if hasattr(X, "toarray"):
-        X = X.toarray()
-    X = X.astype("float32", copy=False)
+    # Cargar datos dispersos
+    X_sparse = joblib.load(x_path)
     y = joblib.load(y_path)
     
     # Cargar modelo
-    input_dim = X.shape[1]
-    model = Autoencoder(input_dim, encoding_dim=64, hidden_dim=128).to(device)
+    input_dim = X_sparse.shape[1]
+    model = Autoencoder(input_dim, encoding_dim=24, hidden_dim=48).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     
-    # Calcular MSE para todas las muestras
-    dataset = torch.utils.data.TensorDataset(torch.tensor(X).float().to(device))
-    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    # Dataset para carga incremental
+    dataset = SparseTensorDataset(X_sparse, device)
+    loader = DataLoader(dataset, batch_size=batch_size)
     
+    # Calcular MSE en bloques
     mse_scores = []
     with torch.no_grad():
-        for batch in loader:
-            inputs = batch[0]
+        for inputs, _ in loader:
+            inputs = inputs.to(device)
             reconstructions = model(inputs)
-            mse = torch.mean((reconstructions - inputs) ** 2, dim=1)
-            mse_scores.append(mse.cpu().numpy())  # Mover a CPU para numpy
+            mse = torch.mean((reconstructions - inputs) ** 2, dim=1).cpu().numpy()
+            mse_scores.append(mse)
     
     mse_scores = np.concatenate(mse_scores)
     
@@ -58,17 +54,13 @@ def detect_anomalies_hdfs(
         std = np.std(mse_scores)
         threshold = mean + 3 * std
     else:  # fixed
-        threshold = 0.1  # valor por defecto
+        threshold = 0.1
     
     # Predecir anomalías
     preds = (mse_scores > threshold).astype(int)
     
-    # Crear directorios si no existen
-    Path(mse_out_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(preds_out_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(meta_out_path).parent.mkdir(parents=True, exist_ok=True)
-    
     # Guardar resultados
+    Path(mse_out_path).parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(mse_scores, mse_out_path)
     joblib.dump(preds, preds_out_path)
     joblib.dump({
@@ -81,6 +73,6 @@ def detect_anomalies_hdfs(
         "anomaly_ratio": float(np.mean(preds))
     }, meta_out_path)
     
-    print(f"Detección de anomalías completada. Se encontraron {np.sum(preds)} anomalías")
+    print(f"Detección completada. Anomalías encontradas: {np.sum(preds)}")
     
     return str(mse_out_path), str(preds_out_path), str(meta_out_path)

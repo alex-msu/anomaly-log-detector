@@ -1,21 +1,37 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import joblib
 from pathlib import Path
 import time
 import gc
 from tqdm import tqdm
+import scipy.sparse
+
+class SparseTensorDataset(Dataset):
+    """Dataset para cargar matrices dispersas eficientemente"""
+    def __init__(self, data, device='cpu'):
+        self.data = data
+        self.device = device
+        self.shape = data.shape
+        
+    def __len__(self):
+        return self.data.shape[0]
+    
+    def __getitem__(self, idx):
+        # Convertir a denso solo la fila necesaria
+        sample = torch.tensor(self.data[idx].toarray().squeeze(), dtype=torch.float32)
+        return sample.to(self.device), sample.to(self.device)
 
 class Autoencoder(nn.Module):
     def __init__(self, input_dim, encoding_dim, hidden_dim):
         super(Autoencoder, self).__init__()
-        # Capas más eficientes con inicialización adecuada
+        # Arquitectura optimizada para bajo consumo de memoria
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, encoding_dim),
             nn.ReLU()
@@ -27,12 +43,6 @@ class Autoencoder(nn.Module):
             nn.Sigmoid()
         )
         
-        # Inicialización de pesos
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                nn.init.constant_(m.bias, 0.01)
-    
     def forward(self, x):
         return self.decoder(self.encoder(x))
 
@@ -40,13 +50,13 @@ def train_autoencoder_hdfs(
     x_path: str | Path = "data/processed/X_tfidf_sparse.joblib",
     y_path: str | Path = "data/processed/y.joblib",
     model_out_path: str | Path = "models/autoencoder_hdfs.pt",
-    encoding_dim: int = 32,
-    hidden_dim: int = 64,
-    epochs: int = 20,
-    batch_size: int = 1024,
+    encoding_dim: int = 24,
+    hidden_dim: int = 48,
+    epochs: int = 10,
+    batch_size: int = 2048,
     val_ratio: float = 0.1,
     learning_rate: float = 0.001,
-    patience: int = 3,
+    patience: int = 2,
     seed: int = 42,
     verbose: int = 1,
 ):
@@ -57,7 +67,7 @@ def train_autoencoder_hdfs(
         if device.type == 'cuda':
             print(f"GPU: {torch.cuda.get_device_name(0)}")
     
-    # Habilitar optimizaciones de cuDNN
+    # Habilitar optimizaciones
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
     
@@ -67,66 +77,50 @@ def train_autoencoder_hdfs(
     if device.type == 'cuda':
         torch.cuda.manual_seed_all(seed)
     
-    # Cargar solo los datos necesarios
     if verbose:
         print("Cargando datos...")
     
-    X = joblib.load(x_path)
-    if hasattr(X, "toarray"):
-        X = X.toarray().astype("float32")
-    else:
-        X = X.astype("float32")
-    
+    # Cargar solo las etiquetas para filtrar
     y = joblib.load(y_path)
-    
-    # Filtrar solo muestras normales (label == 0)
     normal_mask = (y == 0)
-    X_normal = X[normal_mask]
-    
-    # Liberar memoria inmediatamente
-    del X, y
+    del y
     gc.collect()
     
-    # Usar solo una muestra del 50% para acelerar (en Colab)
-    if 'COLAB_GPU' in os.environ:
-        sample_size = min(500000, len(X_normal))
-        idx = np.random.choice(len(X_normal), sample_size, replace=False)
-        X_normal = X_normal[idx]
-        if verbose:
-            print(f"Usando muestra de {sample_size} registros para entrenamiento")
+    # Cargar datos dispersos directamente
+    X_sparse = joblib.load(x_path)
     
-    # Shuffle y split
-    idx = np.random.permutation(len(X_normal))
-    X_normal = X_normal[idx]
-    split = int((1 - val_ratio) * len(X_normal))
-    X_train, X_val = X_normal[:split], X_normal[split:]
-    
-    # Convertir a tensores y mover a dispositivo
-    X_train_tensor = torch.tensor(X_train).float().to(device)
-    X_val_tensor = torch.tensor(X_val).float().to(device)
-    
-    # Liberar más memoria
-    del X_normal, X_train, X_val
+    # Filtrar solo muestras normales
+    X_normal = X_sparse[normal_mask]
+    del X_sparse, normal_mask
     gc.collect()
-    if device.type == 'cuda':
-        torch.cuda.empty_cache()
     
-    # Preparar datasets y dataloaders
-    train_data = TensorDataset(X_train_tensor, X_train_tensor)
-    val_data = TensorDataset(X_val_tensor, X_val_tensor)
+    # Dividir índices en lugar de datos
+    num_samples = X_normal.shape[0]
+    indices = np.arange(num_samples)
+    np.random.shuffle(indices)
+    split = int((1 - val_ratio) * num_samples)
+    train_indices, val_indices = indices[:split], indices[split:]
     
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, pin_memory=True)
-    val_loader = DataLoader(val_data, batch_size=batch_size, pin_memory=True)
+    # Crear datasets que cargan bajo demanda
+    train_dataset = SparseTensorDataset(X_normal[train_indices], device)
+    val_dataset = SparseTensorDataset(X_normal[val_indices], device)
+    
+    del X_normal
+    gc.collect()
+    
+    # Crear dataloaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size)
     
     # Inicializar modelo
-    input_dim = X_train_tensor.shape[1]
+    input_dim = train_dataset.shape[1]
     model = Autoencoder(input_dim, encoding_dim, hidden_dim).to(device)
     
-    # Usar mixed precision para acelerar entrenamiento en GPU
+    # Mixed precision para GPU
     scaler = torch.cuda.amp.GradScaler() if device.type == 'cuda' else None
     
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     
     # Crear directorio para el modelo
     model_out_path = Path(model_out_path)
@@ -147,7 +141,7 @@ def train_autoencoder_hdfs(
         batch_iter = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", disable=verbose<2)
         
         for inputs, targets in batch_iter:
-            inputs, targets = inputs.to(device, non_blocking=True), targets.to(device, non_blocking=True)
+            inputs, targets = inputs.to(device), targets.to(device)
             
             optimizer.zero_grad()
             
@@ -179,7 +173,7 @@ def train_autoencoder_hdfs(
         val_batches = 0
         with torch.no_grad():
             for inputs, targets in val_loader:
-                inputs, targets = inputs.to(device, non_blocking=True), targets.to(device, non_blocking=True)
+                inputs, targets = inputs.to(device), targets.to(device)
                 outputs = model(inputs)
                 loss = criterion(outputs, targets)
                 val_loss += loss.item()
