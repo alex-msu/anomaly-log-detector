@@ -23,8 +23,8 @@ class SparseTensorDataset(Dataset):
     
     def __getitem__(self, idx):
         # Convertir a denso solo la fila necesaria
-        sample = torch.tensor(self.data[idx].toarray().squeeze(), dtype=torch.float32)
-        return sample.to(self.device), sample.to(self.device)
+        sample = torch.from_numpy(self.data[idx].toarray().ravel()).float()
+        return sample, sample
 
 class Autoencoder(nn.Module):
     def __init__(self, input_dim, encoding_dim, hidden_dim):
@@ -39,8 +39,7 @@ class Autoencoder(nn.Module):
         self.decoder = nn.Sequential(
             nn.Linear(encoding_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, input_dim),
-            nn.Sigmoid()
+            nn.Linear(hidden_dim, input_dim)   # salida lineal + MSE
         )
         
     def forward(self, x):
@@ -55,7 +54,10 @@ def train_autoencoder_hdfs(
     epochs: int = 10,
     batch_size: int = 2048,
     val_ratio: float = 0.1,
+    max_train_normals: int | None = 2_000_000,
     learning_rate: float = 0.001,
+    num_workers: int = 2,
+    steps_per_epoch: int | None = None,
     patience: int = 2,
     seed: int = 42,
     verbose: int = 1,
@@ -101,16 +103,23 @@ def train_autoencoder_hdfs(
     split = int((1 - val_ratio) * num_samples)
     train_indices, val_indices = indices[:split], indices[split:]
     
-    # Crear datasets que cargan bajo demanda
-    train_dataset = SparseTensorDataset(X_normal[train_indices], device)
-    val_dataset = SparseTensorDataset(X_normal[val_indices], device)
-    
-    del X_normal
-    gc.collect()
+    if max_train_normals is not None and max_train_normals < len(train_indices):
+        train_indices = np.random.choice(train_indices, size=max_train_normals, replace=False)
+
+    train_dataset = SparseTensorDataset(X_normal[train_indices])
+    val_dataset   = SparseTensorDataset(X_normal[val_indices])
+    del X_normal; gc.collect()
     
     # Crear dataloaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size)
+    pin = (device.type == 'cuda')
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True,
+        num_workers=num_workers, pin_memory=pin, persistent_workers=(num_workers>0)
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers, pin_memory=pin, persistent_workers=(num_workers>0)
+    )
     
     # Inicializar modelo
     input_dim = train_dataset.shape[1]
@@ -150,15 +159,14 @@ def train_autoencoder_hdfs(
                 with torch.cuda.amp.autocast():
                     outputs = model(inputs)
                     loss = criterion(outputs, targets)
-                
                 scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
+                scaler.step(optimizer); scaler.update()
             else:
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-                loss.backward()
-                optimizer.step()
+                outputs = model(inputs); loss = criterion(outputs, targets)
+                loss.backward(); optimizer.step()
+                train_loss += loss.item(); train_batches += 1
+            if steps_per_epoch and (b+1) >= steps_per_epoch:
+                break
             
             train_loss += loss.item()
             train_batches += 1

@@ -3,6 +3,10 @@ import sys
 from pathlib import Path
 import gc
 import torch
+
+from src.sgd_hashing_pipeline import train_sgd_hash, eval_block_level
+MODE = os.environ.get("HDFS_MODE", "sgd")  # "sgd" | "ae"
+
 from src.hdfs_download import download_file, extract_selected
 from src.hdfs_preprocess import preprocess_hdfs
 from src.hdfs_vectorize import vectorize_hdfs
@@ -88,43 +92,43 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # 5. ENTRENAR AUTOENCODER CON CARGA INCREMENTAL
-    print("\n" + "="*50)
-    print("Paso 5: Entrenamiento optimizado con carga incremental")
-    print(f"Usando batch size: {BATCH_SIZE_TRAIN}, épocas: {EPOCHS}")
-    
-    history, model_path = train_autoencoder_hdfs(
-        x_path=x_path,
-        y_path=y_path,
-        batch_size=BATCH_SIZE_TRAIN,
-        epochs=EPOCHS,
-        encoding_dim=24,
-        hidden_dim=48
-    )
-    print(f"Entrenamiento completo. Modelo guardado en: {model_path}")
-    
-    # Liberar memoria
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-    # 6. DETECTAR ANOMALÍAS
-    print("\n" + "="*50)
-    print("Paso 6: Detección de anomalías")
-    print(f"Usando batch size: {BATCH_SIZE_DETECT}")
-    
-    mse_path, preds_path, meta_path = detect_anomalies_hdfs(
-        model_path=model_path,
-        x_path=x_path,
-        y_path=y_path,
-        batch_size=BATCH_SIZE_DETECT,
-        threshold_method="percentile",
-        percentile=0.99
-    )
-    print(f"Detección completa.\n - MSE: {mse_path}\n - Predicciones: {preds_path}\n - Metadatos: {meta_path}")
-
-    print("\n" + "="*50)
-    print("¡Pipeline completado con éxito!")
+    # ... dentro de main(), reemplaza las etapas 5 y 6:
+    if MODE == "sgd":
+        print("\n" + "="*50)
+        print("Paso 5: Entrenamiento rápido (Hashing + SGDClassifier, streaming)")
+        model_path, vec_path, meta_path = train_sgd_hash(
+            input_csv=out_path,
+            chunksize=200_000,      # súbelo/bájalo según RAM
+            n_features=2**18,       # 262k; prueba 2**19 si hay RAM
+            ngram_range=(1, 2),     # uni + bi-gramas
+            val_fold=10, val_pick=0
+        )
+        print(f"[OK] Modelo: {model_path}\nVectorizador: {vec_path}\nMeta: {meta_path}")
+        print("\n" + "="*50)
+        print("Paso 6: Evaluación a nivel de BLOQUE + selección de umbral por F1")
+        thr, cm, rep, ap, roc = eval_block_level(
+            input_csv=out_path,
+            model_path=model_path,
+            vectorizer_path=vec_path,
+            threshold=None,         # elige por F1 a nivel bloque
+            chunksize=200_000
+        )
+    else:
+        # Tu ruta actual con autoencoder (menos recomendable con tus recursos)
+        history, model_path = train_autoencoder_hdfs(
+            x_path=x_path, y_path=y_path,
+            batch_size=BATCH_SIZE_TRAIN, epochs=EPOCHS,
+            encoding_dim=24, hidden_dim=48
+        )  # :contentReference[oaicite:2]{index=2}
+        mse_path, preds_path, meta_path = detect_anomalies_hdfs(
+            model_path=model_path,
+            x_path=x_path,
+            y_path=y_path,
+            batch_size=BATCH_SIZE_DETECT,
+            threshold_method="val_f1", # validación por etiquetas
+            aggregate_by_block=True,
+            processed_csv_path=out_path,
+        )  # :contentReference[oaicite:3]{index=3}
 
 if __name__ == "__main__":
     # Configuración automática de dispositivo
