@@ -1,0 +1,4 @@
+# requirements.txt
+# Archivo maestro que combina las dependencias
+-r requirements_core.txt
+-r requirements_gpu.txt

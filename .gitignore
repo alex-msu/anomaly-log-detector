@@ -1,0 +1,29 @@
+# Carpetas de Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Archivos temporales de Jupyter
+.ipynb_checkpoints/
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Entornos virtuales
+env/
+venv/
+.venv/
+
+# Datos
+data/
+models/
+backups/
+
+# Archivos de configuración locales
+*.env
+*.log
+
+# Archivos comprimidos
+*.zip
+*.tar.gz
