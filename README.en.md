@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/alex-msu/anomaly-log-detector/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-msu/anomaly-log-detector/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](<COLAB_LINK>)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alex-msu/anomaly-log-detector/blob/main/notebooks/hdfs_anomaly_detection.ipynb)
 
 Block-level anomaly detection on **HDFS** logs using a **HashingVectorizer + SGD (streaming)** pipeline, **Platt calibration**, **block aggregation** (`max`, `mean`, `noisy_or`), and **operational thresholding** (`posrate` or `min_precision`).  
 Runs **on CPU** (<13 GB RAM). An optional **Autoencoder baseline** is included for comparison.
