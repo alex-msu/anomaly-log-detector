@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "HDFS Log Anomaly Detection (Hashing+SGD, block-level)"
+doi: ""
+version: "1.0.0"
+date-released: "2025-08-15"
+authors:
+  - family-names: "Martínez"
+    given-names: "Alexis"
+    email: "alexis.martinez.6584@gmail.com"
+    # affiliation: ""
+repository-code: "https://github.com/alex-msu/anomaly-log-detector"
+license: "Apache-2.0"
+keywords:
+  - anomaly detection
+  - logs
+  - HDFS
+  - streaming
+preferred-citation:
+  type: software
+  title: "HDFS Log Anomaly Detection"
+  authors:
+    - family-names: "Martínez"
+      given-names: "Alexis"
+  year: 2025
+  url: "https://github.com/alex-msu/anomaly-log-detector"

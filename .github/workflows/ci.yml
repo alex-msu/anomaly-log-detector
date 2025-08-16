@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+# Cancela ejecuciones anteriores de la misma rama si haces push rápido varias veces
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Create dirs (data/models/docs)
+        run: |
+          mkdir -p data/raw data/processed models docs/assets
+
+      # Cachea el ZIP de HDFS para acelerar corridas posteriores
+      - name: Cache HDFS ZIP
+        uses: actions/cache@v4
+        with:
+          path: data/HDFS_v1.zip
+          key: hdfs-zip-v1
+
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements.txt
+
+      - name: Run smoke test (streaming SGD, CPU)
+        env:
+          # Config "chica" para CI
+          HDFS_MODE: sgd
+          HDFS_AGG: max
+          HDFS_THRESHOLD_MODE: posrate
+          HDFS_TARGET_POSRATE: "0.03"
+          HDFS_MIN_PREC: "0.25"
+          HDFS_CHUNKSIZE: "20000"
+          HDFS_NFEATURES: "131072"  # 2**17 para CI
+          HDFS_NGRAM: "1,2"
+
+          # Limitar threads BLAS (runner estable)
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: |
+          python scripts/hdfs_smoke_test.py
+
+      # (Opcional) Sube métricas/artefactos del smoke para inspección rápida
+      - name: Upload smoke artifacts (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-artifacts
+          path: |
+            data/results/**
+            docs/assets/**
+          if-no-files-found: ignore
