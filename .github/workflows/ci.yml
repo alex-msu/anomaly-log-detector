@@ -45,6 +45,7 @@ jobs:
 
       - name: Run smoke test (streaming SGD, CPU)
         env:
+          PYTHONPATH: ${{ github.workspace }}
           # Config "chica" para CI
           HDFS_MODE: sgd
           HDFS_AGG: max

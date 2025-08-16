@@ -18,6 +18,11 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+# --- make repo root importable ---
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+# ---------------------------------
 # Rutas y helpers del proyecto
 from src.hdfs_download import download_file, extract_selected
 from src.hdfs_preprocess import preprocess_hdfs
