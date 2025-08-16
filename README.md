@@ -2,7 +2,7 @@
 
 [Español](README.md) · [English](README.en.md)
 
-[![CI](https://github.com/alex-msu/anomaly-log-detector/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-msu/anomaly-log-detector/actions/workflows/ci.yml)
+[![CI](https://github.com/alex-msu/anomaly-log-detector/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/alex-msu/anomaly-log-detector/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alex-msu/anomaly-log-detector/blob/main/notebooks/hdfs_anomaly_detection.ipynb)
 
